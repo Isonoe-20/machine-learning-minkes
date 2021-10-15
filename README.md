@@ -1,2 +1,2 @@
-# machine-learning-for-minkies
-
+# machine-learning-minkes
+ 
