@@ -10,11 +10,13 @@ As it was known that the dataset was publically avaliable avoiding authenticatio
 - GoogleDatasets
     - GoogleDataset(client, bucket, prefix)
     - AudioDataset(client, bucket, prefix)
-
-- *client* - google.cloud.storage.Client object (can be either anonymous or authorised)
-- *bucket* - str object (bucket name)
-- *prefix* - str object (if you want a subfolder within the bucket if not default /)
-
+```
+Dataset(
+    client, - google.cloud.storage.Client object (can be either anonymous or authorised)
+    bucket, - str object (bucket name)
+    prefix - str object (if you want a subfolder within the bucket if not default /)
+)
+```
 AudoDataset has a *getitem* method, this will allow a specific blob to be downloaded to a temporary file.
 
 Example:
