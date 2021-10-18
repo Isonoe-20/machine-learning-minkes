@@ -12,12 +12,10 @@ By: Jordan Williams
 # Imports
 import csv
 import datetime
-from typing import List, Dict
+import glob
 
 import librosa
 import librosa.display
-import glob
-import matplotlib.pyplot as plt
 import numpy as np
 from google.cloud import storage
 import noisereduce as nr
@@ -64,39 +62,39 @@ def get_ExtractedDetection(
     first_file: bool = True
     ) -> np.array:
     # Download first audio file
-        audio, sample_rate = dataset[idx_audio_blob]
-        clip_length = len(audio) // sample_rate
+    audio, sample_rate = dataset[idx_audio_blob]
+    clip_length = len(audio) // sample_rate
 
-        # Calculate distance through clip
-        clip_start_time_seconds = int((start_datetimes[idx_audio_blob] - REFERENCE_DATETIME).total_seconds())
-        clip_end_time_seconds = int(clip_start_time_seconds + clip_length)
-        if first_file:
-            detect_start_time_seconds = int(clip_start_time_seconds + abs(time_deltas[idx_audio_blob]))
-        else:
-            detect_start_time_seconds = int(clip_start_time_seconds)
-        detect_end_time_seconds = int(detect_start_time_seconds + int(detection["DetectionLength"]))
+    # Calculate distance through clip
+    clip_start_time_seconds = int((start_datetimes[idx_audio_blob] - REFERENCE_DATETIME).total_seconds())
+    clip_end_time_seconds = int(clip_start_time_seconds + clip_length)
+    if first_file:
+        detect_start_time_seconds = int(clip_start_time_seconds + abs(time_deltas[idx_audio_blob]))
+    else:
+        detect_start_time_seconds = int(clip_start_time_seconds)
+    detect_end_time_seconds = int(detect_start_time_seconds + int(detection["DetectionLength"]))
 
-        # Clip Detection from Array
-        start = int(abs(time_deltas[idx_audio_blob]) * sample_rate)
+    # Clip Detection from Array
+    start = int(abs(time_deltas[idx_audio_blob]) * sample_rate)
 
-        # Does Length of Clip excede EOF
-        if clip_end_time_seconds <= detect_end_time_seconds:
-            print("Clip in next File")
-            idx_audio_blob += 1
-            detection["DetectionLength"] = detect_end_time_seconds - clip_end_time_seconds
-            next_partial_clip, noise, sample_rate = get_ExtractedDetection(
-                idx_audio_blob,
-                start_datetimes,
-                time_deltas,
-                dataset,
-                detection,
-                first_file=False
-            )
-            return np.concatenate([audio[start:len(audio)], next_partial_clip]), noise, sample_rate
-        else:
-            print("Clip in this File")
-            finish = int((abs(time_deltas[idx_audio_blob]) + int(detection["DetectionLength"])) * sample_rate)
-            return audio[start:finish], audio[finish:len(audio)], sample_rate
+    # Does Length of Clip excede EOF
+    if clip_end_time_seconds <= detect_end_time_seconds:
+        print("Clip in next File")
+        idx_audio_blob += 1
+        detection["DetectionLength"] = detect_end_time_seconds - clip_end_time_seconds
+        next_partial_clip, noise, sample_rate = get_ExtractedDetection(
+            idx_audio_blob,
+            start_datetimes,
+            time_deltas,
+            dataset,
+            detection,
+            first_file=False
+        )
+        return np.concatenate([audio[start:len(audio)], next_partial_clip]), noise, sample_rate
+    else:
+        print("Clip in this File")
+        finish = int((abs(time_deltas[idx_audio_blob]) + int(detection["DetectionLength"])) * sample_rate)
+        return audio[start:finish], audio[finish:len(audio)], sample_rate
 
 def get_FeatureExtractions(
     audio: np.array,
