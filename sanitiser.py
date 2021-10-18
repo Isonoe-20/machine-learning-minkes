@@ -10,7 +10,6 @@ By: Jordan Williams
 
 """
 # Imports
-import csv
 import datetime
 import glob
 
@@ -22,146 +21,26 @@ import noisereduce as nr
 from tqdm import tqdm
 
 from GoogleDatasets import AudioDataset
+from sanitiser_utils import (
+    get_feature_extractions,
+    get_extracted_detection,
+    get_audio_detections
+)
 import minioClient
-
-REFERENCE_DATETIME = datetime.datetime(1970, 1, 1)
-
-def get_AudioDetections(
-    filePath:str
-    ) -> list[dict]:
-    detections = []
-
-    with open(filePath, 'r') as csv_file:
-        reader = csv.DictReader(csv_file)
-        idx = 0
-        for line in reader:
-            # Change to DateTime Objects
-            start_detection = datetime.datetime.strptime(line["DetectionTimeStart_UTC"], "%m/%d/%Y %H:%M:%S")
-            end_detection = datetime.datetime.strptime(line["DetectionTimeEnd_UTC"], "%m/%d/%Y %H:%M:%S")
-            line["DetectionTimeStart_UTC"] = start_detection
-            line["DetectionTimeEnd_UTC"] = end_detection
-
-            # Calculate Detection length
-            line["DetectionLength"] = (end_detection - start_detection).total_seconds()
-
-            # Remove unecessary keys
-            line.pop('DetectionTimeStart_ShipLocal')
-            line.pop('Latitude')
-            line.pop('Longitude')
-
-            detections.append(line)
-            idx += 1
-    return detections
-
-def get_ExtractedDetection(
-    idx_audio_blob: int,
-    start_datetimes: list[datetime.datetime],
-    time_deltas: list[int],
-    dataset: AudioDataset,
-    detection: dict,
-    first_file: bool = True
-    ) -> np.array:
-    # Download first audio file
-    audio, sample_rate = dataset[idx_audio_blob]
-    clip_length = len(audio) // sample_rate
-
-    # Calculate distance through clip
-    clip_start_time_seconds = int((start_datetimes[idx_audio_blob] - REFERENCE_DATETIME).total_seconds())
-    clip_end_time_seconds = int(clip_start_time_seconds + clip_length)
-    if first_file:
-        detect_start_time_seconds = int(clip_start_time_seconds + abs(time_deltas[idx_audio_blob]))
-    else:
-        detect_start_time_seconds = int(clip_start_time_seconds)
-    detect_end_time_seconds = int(detect_start_time_seconds + int(detection["DetectionLength"]))
-
-    # Clip Detection from Array
-    start = int(abs(time_deltas[idx_audio_blob]) * sample_rate)
-
-    # Does Length of Clip excede EOF
-    if clip_end_time_seconds <= detect_end_time_seconds:
-        print("Clip in next File")
-        idx_audio_blob += 1
-        detection["DetectionLength"] = detect_end_time_seconds - clip_end_time_seconds
-        next_partial_clip, noise, sample_rate = get_ExtractedDetection(
-            idx_audio_blob,
-            start_datetimes,
-            time_deltas,
-            dataset,
-            detection,
-            first_file=False
-        )
-        return np.concatenate([audio[start:len(audio)], next_partial_clip]), noise, sample_rate
-    else:
-        print("Clip in this File")
-        finish = int((abs(time_deltas[idx_audio_blob]) + int(detection["DetectionLength"])) * sample_rate)
-        return audio[start:finish], audio[finish:len(audio)], sample_rate
-
-def get_FeatureExtractions(
-    audio: np.array,
-    sample_rate: int,
-    prefix: str=""
-    ) -> list:
-    features = []
-
-    # Save audio for later use
-    np.save(f"./{prefix}/audio.npy", audio)
-
-    # STFT
-    # Base for contrast and chroma calculations
-    stft = np.abs(librosa.stft(audio))
-
-    #MFCC
-    mfcc = np.mean(librosa.feature.mfcc(
-        y = audio,
-        sr = sample_rate,
-        n_mfcc = 40
-        ).T,
-        axis=0)
-    np.save(f"./{prefix}/mfcc.npy", mfcc)
-    features.extend(mfcc)
-
-    # Chroma
-    chroma = np.mean(librosa.feature.chroma_stft(
-        S=stft,
-        sr=sample_rate
-        ).T,
-        axis=0)
-    np.save(f"./{prefix}/chroma.npy", chroma)
-    features.extend(chroma)
-
-    # Melspectogram
-    spectogram = np.mean(librosa.feature.melspectrogram(
-        y = audio,
-        sr = sample_rate
-    ).T,
-    axis=0)
-    np.save(f"./{prefix}/spectogram.npy", spectogram)
-    features.extend(spectogram)
-
-    # Spectral Contrast
-    contrast = np.mean(librosa.feature.spectral_contrast(
-        S=stft,
-        sr=sample_rate
-        ).T,
-        axis=0)
-    np.save(f"./{prefix}/contrast.npy", contrast)
-    features.extend(contrast)
-
-    return features
 
 # Main
 if __name__ == "__main__":
     print("Main Thread Starting...")
-    startIdx = 400
+    STARTIDX = 400
     clientminio =  minioClient.client
 
     client = storage.Client.create_anonymous_client()
     dataset = AudioDataset(client, 'noaa-pifsc-bioacoustic', '1705/')
-    detections = get_AudioDetections('detections.csv')
-    idx = 0
+    detections = get_audio_detections('detections.csv')
+    IDX = 0
 
     for detection in tqdm(detections):
-        if idx >= startIdx:
+        if IDX >= STARTIDX:
             start_datetimes = []
             time_deltas = []
             for blob in dataset.blobs:
@@ -176,7 +55,7 @@ if __name__ == "__main__":
             # Find audio file
             idx_audio_blob = np.argmin(abs(np.array(time_deltas)))
 
-            detection_clip, noise, sample_rate = get_ExtractedDetection(
+            detection_clip, noise, sample_rate = get_extracted_detection(
                 idx_audio_blob,
                 start_datetimes,
                 time_deltas,
@@ -200,20 +79,20 @@ if __name__ == "__main__":
             )
 
             # Get Features
-            get_FeatureExtractions(noise, sample_rate, prefix="output/noise")
-            get_FeatureExtractions(detection_clip, sample_rate, prefix="output/unprocessed")
-            get_FeatureExtractions(processed_clip, sample_rate, prefix="output/processed")
+            get_feature_extractions(noise, sample_rate, prefix="output/noise")
+            get_feature_extractions(detection_clip, sample_rate, prefix="output/unprocessed")
+            get_feature_extractions(processed_clip, sample_rate, prefix="output/processed")
 
             # Upload images
             listOfFiles = glob.glob("./output/**/*.npy")
             splitListOfFiles = [file.split('/') for file in listOfFiles]
-            for filePath in splitListOfFiles:
-                minioPath = filePath[2:] # Remove unecessary file path elements
-                minioPath.insert(1, f"sample{idx}") # Add new elements
-                minioPath = '/'.join(minioPath) # Join Elements
+            for file_path in splitListOfFiles:
+                MINIOPATH = file_path[2:] # Remove unecessary file path elements
+                MINIOPATH.insert(1, f"sample{IDX}") # Add new elements
+                MINIOPATH = '/'.join(MINIOPATH) # Join Elements
                 result = clientminio.fput_object(
                     'noaa-pifsc-bioacoustic',
-                    minioPath,
-                    "/".join(filePath)
+                    MINIOPATH,
+                    "/".join(file_path)
                 )
-        idx += 1
+        IDX += 1
