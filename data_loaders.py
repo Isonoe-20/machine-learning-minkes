@@ -35,15 +35,15 @@ class FeatureDataLoader(keras.utils.Sequence):
         correspond to the extracted features.
         In form like this:
         samples = [
-                [[bucket/label1/sample1/...1.npy,
+                [bucket/label1/sample1/...1.npy,
                 ...,
                 bucket/label1/sample1/...n.npy,],
                 [...],
                 [bucket/label1/samplen/...1.npy,
                 ...,
-                bucket/label1/samplen/...n.npy,]],
+                bucket/label1/samplen/...n.npy,],
                 ...,
-                [[bucket/labeln/sample1/...1.npy,
+                [bucket/labeln/sample1/...1.npy,
                 ...,
                 bucket/labeln/sample1/...n.npy,],
                 ...]
@@ -108,11 +108,14 @@ class FeatureDataLoader(keras.utils.Sequence):
         for count, sample in enumerate(batch):
             features = []
             for file in sample:
-                data_request = self.client.get_object(
+                self.client.fget_object(
                     self.bucket,
-                    file
+                    file,
+                    "tmp.npy"
                 )
-                features.extend(np.frombuffer(data_request.data))
+                with open("tmp.npy", "rb") as file_obj:
+                    data_request = np.load(file_obj)
+                features.extend(data_request)
             batch_samples.append(features)
             batch_labels.append(self.labels[
                 (idx * self.batch_size) + count
@@ -122,9 +125,7 @@ class FeatureDataLoader(keras.utils.Sequence):
 if __name__ == "__main__":
     generator = FeatureDataLoader(
         minioClient.client,
-        'noaa-pifsc-bioacoustic',
-        '',
-        ['noise', 'processed']
+        "noaa-pifsc-bioacoustic",
+        "",
+        ["noise", "processed"]
     )
-    print(len(generator))
-    test = generator[769]
