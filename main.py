@@ -9,97 +9,16 @@ import tensorflow.keras as keras
 import numpy as np
 import re
 
-from minioClient import client
+from tensorflow.keras import callbacks
+import minioClient
 
-class DataGenerator(keras.utils.Sequence):
-    def __init__(
-        self,
-        client,
-        bucket,
-        path,
-        batch_size,
-        label,
-        shuffle
-    ):
-        self.client = client
-        self.bucket = bucket
-        self.path = path
-        self.batch_size = batch_size
-        self.label = label
-        self.shuffle = shuffle
-
-        # Calculate total files
-        objects = self.client.list_objects(
-            self.bucket,
-            prefix=self.path
-        )
-        self.object_count = 0
-        """self.objects = []
-        for obj in objects:
-            self.objects.append(obj.object_name)"""
-        """
-        loop Path/s
-
-        minio path layout
-        bucket/labelx/samplex/audio.npy
-        bucket/labelx/samplex/...npy
-        samples = []
-        labels = []
-        for label in labels:
-            features = []
-            get_objects()
-            for obj in objects:
-                if not contains audio:
-                    features.append(obj.name)
-            samples.append(features)
-            labels.append(label.index)
-
-        expected result:
-            samples = [
-                [bucket/label1/sample1/...1.npy,
-                ...,
-                bucket/label1/sample1/...n.npy,],
-                [...],
-                [bucket/label1/samplen/...1.npy,
-                ...,
-                bucket/label1/samplen/...n.npy,],
-                [...],
-                [bucket/labeln/sample1/...1.npy,
-                ...,
-                bucket/labeln/sample1/...n.npy,],
-                ...
-            ]
-            labels = [1, ..., 1, ..., n, ...]
-        """
-
-    def __len__(self):
-        return int(np.floor(self.object_count / self.batch_size))
-
-    def __getitem__(
-        self,
-        idx
-    ):
-        batchObjectList = []
-        batchStart = idx * self.batch_size
-        batchEnd = (idx + 1) * self.batch_size
-        while (batchStart < batchEnd):
-            batchObjectList.append(f"{self.path}sample{batchStart}/")
-            batchStart += 1
-        for objPath in batchObjectList:
-            subObjects = self.client.list_objects(
-                self.bucket,
-                prefix=objPath
-            )
-            for subObject in subObjects:
-                if(not(re.search(r'audio', subObject.object_name))):
-                    print(subObject.object_name)
-        return idx
+from tqdm import tqdm
+from data_loaders import FeatureDataLoader
 
 def AlexNet(
-    n_features: int,
-    n_classes: int
+    n_features: int
     ) -> keras.Model:
-    model = keras.Sequential
+    model = keras.Sequential()
 
     optimiser = keras.optimizers.Adam(
         0.001,
@@ -107,30 +26,107 @@ def AlexNet(
         0.999,
         amsgrad=False
     )
-
-    model.add(
-        keras.Dense(256, activation='relu'),
-        input_dim = n_features
-    )
-    model.add(keras.Dense(128, activation='relu'))
-    model.add(keras.Dense(64, activation='relu'))
-    model.add(keras.Dense(n_classes, activation='softmax'))
+    model.add(keras.layers.Dense(256, activation='relu', input_dim = n_features))
+    model.add(keras.layers.Dense(128, activation='relu'))
+    model.add(keras.layers.Dense(64, activation='relu'))
+    model.add(keras.layers.Dense(1, activation='sigmoid'))
 
     model.compile(
-        loss = "sparse_categorical_crossentropy",
+        loss = "binary_crossentropy",
         optimizer = optimiser,
         metrics = ["accuracy"]
     )
 
+    return model
+
 if __name__ == "__main__":
-    processed = DataGenerator(
+    client = minioClient.client
+    bucket = "noaa-pifsc-bioacoustic"
+    path = ""
+    label_names = ["noise", "processed"]
+    files = []
+    labels = []
+    """
+    Will take a Minio Client and a bucket in which to find the dataset
+    A list of labels will also need to be supplied.
+    This function will form a list of paths that
+    correspond to the extracted features.
+    In form like this:
+    samples = [
+            [bucket/label1/sample1/...1.npy,
+            ...,
+            bucket/label1/sample1/...n.npy,],
+            [...],
+            [bucket/label1/samplen/...1.npy,
+            ...,
+            bucket/label1/samplen/...n.npy,],
+            ...,
+            [bucket/labeln/sample1/...1.npy,
+            ...,
+            bucket/labeln/sample1/...n.npy,],
+            ...]
+        ]
+    """
+    for count, label in enumerate(label_names):
+        samples = client.list_objects(
+            bucket,
+            prefix = f"{path}{label}/"
+        )
+        for sample in tqdm(samples):
+            objects = client.list_objects(
+                bucket,
+                prefix = sample.object_name
+            )
+            feature_files = []
+            for obj in objects:
+                if not re.search(r'audio', obj.object_name):
+                    feature_files.append(obj.object_name)
+            files.append(feature_files)
+            labels.append(count)
+
+    joined_lists = list(zip(files, labels))
+    np.random.shuffle(joined_lists)
+    files , labels = zip(*joined_lists)
+
+    ten_percent = int(np.floor(len(labels) / 10))
+    train = FeatureDataLoader(
         client,
-        'noaa-pifsc-bioacoustic',
-        'processed/',
-        8,
-        1,
-        True
+        bucket,
+        files[0 : 8 * ten_percent],
+        labels[0 : 8 * ten_percent],
+        shuffle=True
+    )
+    val = FeatureDataLoader(
+        client,
+        bucket,
+        files[(8 * ten_percent)+1 : 9 * ten_percent],
+        labels[(8 * ten_percent)+1 : 9 * ten_percent],
+        shuffle=True
+    )
+    test = FeatureDataLoader(
+        client,
+        bucket,
+        files[(9 * ten_percent)+1 : int(len(labels))],
+        labels[(9 * ten_percent)+1 : int(len(labels))],
+        shuffle=True
     )
 
-    print(len(processed))
-    processed[1]
+    model = AlexNet(187)
+    history = None
+    fpath = "./model.hdf5"
+    checkpointer = keras.callbacks.ModelCheckpoint(
+        fpath,
+        monitor='val_loss',
+        save_best_only=True,
+        verbose=1
+    )
+    samples, labels = train[0]
+    print(samples.shape)
+    print(labels.shape)
+    history = model.fit(
+        train,
+        epochs = 30,
+        validation_data=val,
+        callbacks=[checkpointer],
+        verbose = 2
+    )

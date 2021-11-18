@@ -1,6 +1,7 @@
 *.xlsx
 *.json
 *.wav
+*.npy
 __pycache__
 .DS_Store
 venv
