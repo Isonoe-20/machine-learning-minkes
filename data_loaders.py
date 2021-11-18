@@ -7,13 +7,9 @@ How we want the data returned:
     [samples, labels]
 """
 # Imports
-import re
 
 import numpy as np
-from tqdm import tqdm
 from tensorflow import keras
-
-import minioClient
 
 class FeatureDataLoader(keras.utils.Sequence):
     """
@@ -21,58 +17,24 @@ class FeatureDataLoader(keras.utils.Sequence):
     """
     def __init__(
         self,
-        client: minioClient.client,
-        bucket: str,
-        path: str,
-        label_names: list[str],
+        client,
+        bucket,
+        files,
+        labels,
         batch_size = 8,
         shuffle = False
         ) -> None:
         """
-        Will take a Minio Client and a bucket in which to find the dataset
-        A list of labels will also need to be supplied.
-        This function will form a list of paths that
-        correspond to the extracted features.
-        In form like this:
-        samples = [
-                [bucket/label1/sample1/...1.npy,
-                ...,
-                bucket/label1/sample1/...n.npy,],
-                [...],
-                [bucket/label1/samplen/...1.npy,
-                ...,
-                bucket/label1/samplen/...n.npy,],
-                ...,
-                [bucket/labeln/sample1/...1.npy,
-                ...,
-                bucket/labeln/sample1/...n.npy,],
-                ...]
-            ]
+        Initiates class with a list of files and labels.
+        It also defines if the dataset is shuffled at the end of an epoch
+        as well as batch sizes.
         """
+        self.files = files
+        self.labels = labels
         self.client = client
         self.bucket = bucket
-        self.label_names = label_names
         self.batch_size = batch_size
         self.shuffle = shuffle
-
-        self.files = []
-        self.labels = []
-        for count, label in enumerate(label_names):
-            samples = self.client.list_objects(
-                self.bucket,
-                prefix = f"{path}{label}/"
-            )
-            for sample in tqdm(samples):
-                objects = self.client.list_objects(
-                    self.bucket,
-                    prefix = sample.object_name
-                )
-                feature_files = []
-                for obj in objects:
-                    if not re.search(r'audio', obj.object_name):
-                        feature_files.append(obj.object_name)
-                self.files.append(feature_files)
-                self.labels.append(count)
 
     def __len__(self) -> int:
         """
@@ -120,12 +82,10 @@ class FeatureDataLoader(keras.utils.Sequence):
             batch_labels.append(self.labels[
                 (idx * self.batch_size) + count
                 ])
-        return (batch_samples, batch_labels)
+        return np.array(batch_samples), np.array(batch_labels)
 
-if __name__ == "__main__":
-    generator = FeatureDataLoader(
-        minioClient.client,
-        "noaa-pifsc-bioacoustic",
-        "",
-        ["noise", "processed"]
-    )
+    def on_epoch_end(self):
+        if self.shuffle == True:
+            joined_lists = list(zip(self.files, self.labels))
+            np.random.shuffle(joined_lists)
+            self.files , self.labels = zip(*joined_lists)
